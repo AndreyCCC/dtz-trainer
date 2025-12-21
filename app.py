@@ -1,6 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
+import base64
 import os
 import random
 
@@ -10,7 +11,7 @@ import random
 st.set_page_config(page_title="DTZ Trainer", page_icon="🇩🇪", layout="centered")
 
 # --- КЛЮЧ ---
-LOCAL_API_KEY = "sk-..."  # Вставь свой ключ сюда
+LOCAL_API_KEY = "sk-..."  # <--- ТВОЙ КЛЮЧ
 
 try:
     if "OPENAI_API_KEY" in st.secrets:
@@ -22,7 +23,7 @@ except:
 
 # --- СЦЕНАРИИ ---
 PROMPTS = {
-    "vorstellung": "Du bist ein freundlicher DTZ Prüfer (B1). Teil 1: Kennenlernen. Frage nach: Name, Herkunft, Beruf, Familie.",
+    "vorstellung": "Du bist ein freundlicher DTZ Prüfer (B1). Teil 1. Frage nach: Name, Herkunft, Beruf, Familie.",
     "bild": "Du bist ein DTZ Prüfer (B1). Teil 2: Bildbeschreibung. Höre zu. Frage nach Details.",
     "planung": "Du bist ein DTZ Prüfer (B1). Teil 3: Planung. Wir planen eine Party. Mache Vorschläge."
 }
@@ -62,6 +63,16 @@ def go_to(page):
     st.session_state.page = page
     st.rerun()
 
+def play_audio_html(audio_bytes):
+    """Невидимый авто-плеер через HTML"""
+    b64 = base64.b64encode(audio_bytes).decode()
+    md = f"""
+        <audio autoplay style="display:none;">
+        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+    """
+    st.markdown(md, unsafe_allow_html=True)
+
 # ==========================================
 # 3. STATE
 # ==========================================
@@ -77,8 +88,6 @@ st.markdown("""
 .user-msg {background-color:#e3f2fd; padding:10px; border-radius:10px; text-align:right; color:black; margin: 5px 0;}
 .ai-msg {background-color:#f1f8e9; padding:10px; border-radius:10px; text-align:left; color:black; margin: 5px 0;}
 .stButton button {width:100%; border-radius:8px; height: 3.5rem; font-weight:bold;}
-/* Делаем плеер большим */
-audio { width: 100%; margin-top: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -126,10 +135,8 @@ elif st.session_state.page == "exam":
     # Задание
     if st.session_state.exam_type == "bild":
         st.image(st.session_state.current_image, use_container_width=True)
-    elif st.session_state.exam_type == "planung":
-        st.info("Aufgabe: Planen Sie eine Party.")
     else:
-        st.info("Aufgabe: Stellen Sie sich vor.")
+        st.info("Aufgabe: Sprechen Sie bitte.")
 
     st.divider()
 
@@ -155,16 +162,15 @@ elif st.session_state.page == "exam":
         st.session_state.last_audio = audio_bytes
         st.rerun()
 
-    # --- ГЛАВНЫЙ ПЛЕЕР (С ФИКСОМ) ---
+    # --- ЗВУК (ГИБРИД) ---
     if "last_audio" in st.session_state and st.session_state.last_audio:
+        # 1. Видимый плеер (для ручного нажатия, если автоплей не сработает)
+        # Убрали autoplay=True, чтобы не падало на старых версиях
         st.write("🔊 Экзаменатор:")
-        # ВАЖНО: key=random заставляет Streamlit перерисовать плеер с нуля, что триггерит автоплей
-        st.audio(
-            st.session_state.last_audio, 
-            format="audio/mp3", 
-            autoplay=True, 
-            key=f"audio_player_{random.randint(0, 1000000)}"
-        )
+        st.audio(st.session_state.last_audio, format="audio/mp3")
+        
+        # 2. Невидимый авто-запускатор (HTML5)
+        play_audio_html(st.session_state.last_audio)
 
     # Управление
     if st.session_state.exam_finished:
@@ -216,9 +222,7 @@ elif st.session_state.page == "exam":
                 ai_text = get_ai_response(messages)
                 st.session_state.chat_history.append(("assistant", ai_text))
                 
-                # Генерируем новый звук
                 st.session_state.last_audio = text_to_speech(ai_text)
-                
                 st.session_state.recorder_key = str(random.randint(1,999))
                 st.rerun()
 
