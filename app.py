@@ -1,276 +1,252 @@
 import streamlit as st
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
+import base64
 import os
 import random
 
 # ==========================================
-# 1. НАСТРОЙКИ И ДИЗАЙН (CSS)
+# 1. НАСТРОЙКИ
 # ==========================================
-st.set_page_config(page_title="DTZ Trainer AI", page_icon="🇩🇪", layout="centered")
+st.set_page_config(page_title="DTZ AI Trainer", page_icon="🇩🇪", layout="centered")
 
+# --- КЛЮЧ ---
+LOCAL_API_KEY = "sk-..." 
+
+try:
+    if "OPENAI_API_KEY" in st.secrets:
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    else:
+        client = OpenAI(api_key=LOCAL_API_KEY)
+except:
+    client = OpenAI(api_key=LOCAL_API_KEY)
+
+# --- СЦЕНАРИИ ---
+PROMPTS = {
+    "vorstellung": (
+        "Du bist ein freundlicher DTZ Prüfer (B1). Teil 1: Kennenlernen.\n"
+        "Frage den Kandidaten nach: Name, Herkunft, Wohnort, Beruf, Familie oder Hobbys.\n"
+        "Regel: Stelle immer nur EINE kurze Frage auf einmal."
+    ),
+    "bild": (
+        "Du bist ein DTZ Prüfer (B1). Teil 2: Bildbeschreibung.\n"
+        "Höre dem Kandidaten zu. Wenn er eine Pause macht, frage nach Details (Kleidung, Wetter, Farben).\n"
+        "Regel: Sei geduldig und unterstützend."
+    ),
+    "planung": (
+        "Du bist ein DTZ Prüfer (B1). Teil 3: Gemeinsam etwas planen.\n"
+        "Szenario: Wir planen eine Party oder einen Ausflug.\n"
+        "Aufgabe: Mache Vorschläge und reagiere auf die Ideen des Kandidaten."
+    )
+}
+
+GRADING_PROMPT = """
+STOPP. Die Prüfung ist vorbei.
+Gib eine Bewertung auf Deutsch (Niveau B1).
+Format:
+### 🏁 Ergebnis: [Bestanden / Nicht bestanden]
+- 👍 **Gut:** ...
+- ⚠️ **Tipp:** ...
+"""
+
+# ==========================================
+# 2. ФУНКЦИИ
+# ==========================================
+def text_to_speech(text):
+    """Генерирует аудио (mp3 bytes)"""
+    try:
+        response = client.audio.speech.create(model="tts-1", voice="onyx", input=text)
+        return response.content
+    except Exception as e:
+        st.error(f"TTS Error: {e}")
+        return None
+
+def autoplay_audio(audio_bytes):
+    """Автоплей для мобилок и десктопа"""
+    if audio_bytes:
+        b64 = base64.b64encode(audio_bytes).decode()
+        md = f"""
+            <audio controls autoplay style="width: 100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+        """
+        st.markdown(md, unsafe_allow_html=True)
+
+def reset_session():
+    st.session_state.chat_history = []
+    st.session_state.turn_count = 0
+    st.session_state.exam_finished = False
+    # Рандомный ключ пересоздает кнопку записи (сброс)
+    st.session_state.recorder_key = str(random.randint(1000, 99999))
+    st.session_state.current_image = f"https://picsum.photos/seed/{random.randint(1,999)}/400/300"
+    if "last_audio" in st.session_state: del st.session_state.last_audio
+
+def go_to(page):
+    st.session_state.page = page
+    st.rerun()
+
+# ==========================================
+# 3. STATE
+# ==========================================
+if "page" not in st.session_state: st.session_state.page = "menu"
+if "exam_type" not in st.session_state: st.session_state.exam_type = "bild"
+if "chat_history" not in st.session_state: st.session_state.chat_history = []
+if "turn_count" not in st.session_state: st.session_state.turn_count = 0
+if "recorder_key" not in st.session_state: st.session_state.recorder_key = "1"
+
+# Стили (Пузыри чата)
 st.markdown("""
-    <style>
-    /* 1. Глобальный темный фон */
-    .stApp {
-        background-color: #121212; /* Еще более глубокий черный */
-    }
-
-    /* 2. Текст везде белый */
-    h1, h2, h3, p, label, div {
-        color: #E0E0E0 !important;
-        font-family: sans-serif;
-    }
-
-    /* 3. Пузыри чата (Белые с черным текстом) */
-    .stChatMessage {
-        background-color: #FFFFFF !important;
-        border-radius: 18px;
-        padding: 15px;
-        margin-bottom: 12px;
-        border: none;
-    }
-    .stChatMessage p, .stChatMessage div {
-        color: #000000 !important; /* Текст внутри чата черный */
-    }
-
-    /* 4. Скрытие рамок у аудио-компонента (Фикс убогости) */
-    iframe {
-        border: none !important;
-        background: transparent !important;
-    }
-
-    /* 5. Красивая кнопка старта */
-    div.stButton > button {
-        background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
-        border: none;
-        padding: 15px 30px;
-        border-radius: 30px;
-        font-size: 18px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        transition: 0.3s;
-    }
-    div.stButton > button:hover {
-        transform: scale(1.02);
-    }
-    
-    /* 6. Картинка */
-    .stImage img {
-        border-radius: 12px;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-    }
-    </style>
+<style>
+.user-msg {background-color:#e3f2fd; padding:10px; border-radius:10px; text-align:right; color:black; margin: 5px 0;}
+.ai-msg {background-color:#f1f8e9; padding:10px; border-radius:10px; text-align:left; color:black; margin: 5px 0;}
+.stButton button {width:100%; border-radius:8px; height: 3.5rem; font-weight:bold;}
+</style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. BACKEND (МОЗГИ)
-# ==========================================
-# Пробуем взять ключ из Секретов (на сервере), иначе ищем локально (для тестов)
-api_key = st.secrets.get("OPENAI_API_KEY")
-
-if not api_key:
-    st.error("Нет API ключа! Настройте Secrets.")
-    st.stop()
-    
-client = OpenAI(api_key=api_key)
-CHAT_MODEL = "gpt-4o-mini"
-MAX_TURNS = 3
-
-SYSTEM_PROMPT = """
-Rolle: Prüfer für den Deutsch-Test für Zuwanderer (DTZ).
-Niveau: A2/B1.
-Aufgabe: Teil 2 - Bildbeschreibung.
-
-REGELN:
-1.  **Sprache:** Einfaches Deutsch, kurze Sätze.
-2.  **Ablauf:** Stelle immer nur EINE Frage.
-3.  **Ende:** Nach 3 Fragen beende das Gespräch mit Bewertung.
-
-Wenn [STOP_EXAM] gesendet wird, gib sofort die Bewertung (B1/A2/Nicht bestanden).
-"""
-
-def cleanup_audio():
-    if os.path.exists("output_voice.mp3"):
-        try:
-            os.remove("output_voice.mp3")
-        except:
-            pass
-
-def speech_to_text(audio_bytes):
-    with open("temp_input.mp3", "wb") as f:
-        f.write(audio_bytes)
-    with open("temp_input.mp3", "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1", file=audio_file, language="de", temperature=0.2
-        )
-    return transcript.text
-
-def get_ai_response(messages):
-    response = client.chat.completions.create(
-        model=CHAT_MODEL, messages=messages, max_tokens=400, temperature=0.7 
-    )
-    return response.choices[0].message.content
-
-def text_to_speech(text):
-    cleanup_audio()
-    response = client.audio.speech.create(
-        model="tts-1", voice="onyx", input=text
-    )
-    output_file = "output_voice.mp3"
-    response.stream_to_file(output_file)
-    return output_file
-
-def init_exam():
-    cleanup_audio()
-    st.session_state.recorder_key += 1
-    st.session_state.turn_count = 0 
-    st.session_state.exam_finished = False
-    st.session_state.exam_started = False
-    
-    topics = ["family", "work", "supermarket", "street", "park"]
-    seed = random.randint(1,99999)
-    new_image_url = f"https://picsum.photos/seed/{seed}/600/400" 
-    st.session_state.current_image = new_image_url
-
-    start_phrase = "Guten Tag. Hier ist Ihr Bild. Was sehen Sie?"
-    
-    st.session_state.messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user", 
-            "content": [
-                {"type": "text", "text": f"Das ist das Bild. Sei ein einfacher Prüfer (A2/B1)."},
-                {"type": "image_url", "image_url": {"url": new_image_url}}
-            ]
-        },
-        {"role": "assistant", "content": start_phrase}
-    ]
-
-# ==========================================
-# 3. INTERFACE (FRONTEND)
+# 4. ИНТЕРФЕЙС
 # ==========================================
 
-if "recorder_key" not in st.session_state:
-    st.session_state.recorder_key = 0
-    st.session_state.messages = []
-    init_exam()
+# --- МЕНЮ ---
+if st.session_state.page == "menu":
+    st.title("🇩🇪 DTZ Trainer AI")
+    st.write("Wählen Sie eine Aufgabe:")
+    
+    col1, col2 = st.columns([1, 5])
+    with col1: st.write("👤")
+    with col2: 
+        if st.button("Teil 1: Vorstellung (О себе)"):
+            st.session_state.exam_type = "vorstellung"
+            reset_session()
+            go_to("exam")
 
-# --- HEADER ---
-st.markdown("<h1 style='text-align: center; font-weight: 300;'>🇩🇪 DTZ <b style='color:#4A90E2'>Trainer</b></h1>", unsafe_allow_html=True)
+    with col1: st.write("🖼️")
+    with col2: 
+        if st.button("Teil 2: Bildbeschreibung"):
+            st.session_state.exam_type = "bild"
+            reset_session()
+            go_to("exam")
 
-# --- INFO BAR ---
-if st.session_state.exam_started and not st.session_state.exam_finished:
-    c1, c2, c3 = st.columns([1, 1, 1])
-    c1.metric("Frage", f"{st.session_state.turn_count + 1} / {MAX_TURNS}")
-    if c3.button("🔄 Bild wechseln"):
-        init_exam()
+    with col1: st.write("🗣️")
+    with col2: 
+        if st.button("Teil 3: Planung (Диалог)"):
+            st.session_state.exam_type = "planung"
+            reset_session()
+            go_to("exam")
+
+# --- ЭКЗАМЕН ---
+elif st.session_state.page == "exam":
+    # Хедер
+    c1, c2, c3 = st.columns([1, 3, 1])
+    with c1: 
+        if st.button("🔙"): go_to("menu")
+    with c2: 
+        st.caption(f"Thema: {st.session_state.exam_type.upper()}")
+    with c3: 
+        if st.button("🔄"): reset_session(); st.rerun()
+
+    # Задание (Картинка или Текст)
+    if st.session_state.exam_type == "bild":
+        st.image(st.session_state.current_image, use_container_width=True)
+    elif st.session_state.exam_type == "planung":
+        st.info("💡 Aufgabe: Planen Sie zusammen eine Abschiedsparty.")
+    else:
+        st.info("💡 Aufgabe: Stellen Sie sich vor.")
+
+    st.divider()
+
+    # Чат
+    chat_container = st.container()
+    with chat_container:
+        for role, text in st.session_state.chat_history:
+            css = "user-msg" if role == "user" else "ai-msg"
+            icon = "👤" if role == "user" else "🎓"
+            st.markdown(f"<div class='{css}'>{icon} {text}</div>", unsafe_allow_html=True)
+
+    # Приветствие (Автостарт)
+    if not st.session_state.chat_history:
+        start_texts = {
+            "vorstellung": "Hallo! Wie heißen Sie und woher kommen Sie?",
+            "bild": "Guten Tag. Bitte beschreiben Sie dieses Bild.",
+            "planung": "Hallo! Wollen wir eine Party organisieren?"
+        }
+        greeting = start_texts[st.session_state.exam_type]
+        st.session_state.chat_history.append(("assistant", greeting))
+        
+        # Генерируем аудио
+        audio_bytes = text_to_speech(greeting)
+        st.session_state.last_audio = audio_bytes
         st.rerun()
 
-st.write("---") 
+    # Плеер
+    if "last_audio" in st.session_state and st.session_state.last_audio:
+        autoplay_audio(st.session_state.last_audio)
 
-# --- IMAGE ---
-if st.session_state.current_image:
-    st.image(st.session_state.current_image, use_container_width=True)
-
-# --- SCENARIO 1: START BUTTON ---
-if not st.session_state.exam_started:
-    st.write("")
-    st.write("")
-    # Центрируем кнопку старта
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("STARTEN ▶️", use_container_width=True):
-            st.session_state.exam_started = True
-            first_msg = st.session_state.messages[-1]["content"]
-            text_to_speech(first_msg)
-            st.rerun()
-
-# --- SCENARIO 2: EXAM IN PROGRESS ---
-else:
-    # 1. CHAT
-    st.write("")
-    for msg in st.session_state.messages:
-        if msg["role"] == "assistant" or (msg["role"] == "user" and isinstance(msg["content"], str)):
-            avatar = "👨‍🏫" if msg["role"] == "assistant" else "👤"
-            with st.chat_message(msg["role"], avatar=avatar):
-                st.write(msg["content"])
-
-    # 2. FINISH
+    # Управление (Запись или Финиш)
     if st.session_state.exam_finished:
-        st.success("🏁 Prüfung beendet! (Экзамен завершен)")
-        if st.button("Nächstes Bild üben 🔄", type="primary", use_container_width=True):
-            init_exam()
-            st.rerun()
-
-    # 3. MICROPHONE (BIG & CENTERED)
+        st.success("Prüfung beendet!")
+        if st.button("Zum Ergebnis 🏆"): go_to("result")
     else:
         st.write("---")
-        
-        # Центрирование с помощью колонок
-        left, center, right = st.columns([1, 1, 1])
-        
-        with center:
-            # Инструкция с эмодзи
-            st.markdown(
-                """
-                <div style="text-align: center; color: #888; margin-bottom: 10px; font-size: 14px;">
-                👆 <b>Нажать</b> (запись) <br> 
-                🗣️ <b>Говорить</b> <br> 
-                👇 <b>Нажать</b> (стоп)
-                </div>
-                """, 
-                unsafe_allow_html=True
-            )
-            
-            # КНОПКА ЗАПИСИ
-            # neutral_color="#FFFFFF" -> Белая кнопка (Стильно на черном)
-            # recording_color="#FF4B4B" -> Красная при записи
-            # icon_size="6x" -> ОГРОМНАЯ
-            audio_bytes = audio_recorder(
-                text="",
-                recording_color="#FF4B4B", 
-                neutral_color="#FFFFFF",
-                icon_size="6x",
-                key=str(st.session_state.recorder_key),
-                pause_threshold=5.0,
-                sample_rate=44100
-            )
+        # Кнопка записи
+        audio_bytes = audio_recorder(
+            text="",
+            recording_color="#ff4b4b",
+            neutral_color="#4CAF50",
+            icon_size="3x",
+            key=st.session_state.recorder_key,
+            pause_threshold=2.0 # Пауза 2 сек = стоп (можно увеличить)
+        )
 
-        # Обработка
         if audio_bytes:
-            if len(audio_bytes) < 3000:
-                st.toast("Zu kurz / Коротко!", icon="⚠️")
-                st.session_state.recorder_key += 1
-                st.rerun()
-            else:
-                with st.spinner("Prüfer hört zu..."):
-                    user_text = speech_to_text(audio_bytes)
-                    blacklist = ["Video hat euch gefallen", "Abo da", "Untertitel", "Bits von White"]
-                    is_hallucination = any(p.lower() in user_text.lower() for p in blacklist)
-                    
-                    if is_hallucination:
-                        st.toast("Шум...", icon="🔇")
-                    elif len(user_text) < 2:
-                        st.toast("?", icon="👂")
-                    else:
-                        st.session_state.messages.append({"role": "user", "content": user_text})
-                        st.session_state.turn_count += 1
-                        
-                        if st.session_state.turn_count >= MAX_TURNS:
-                            st.session_state.messages.append({
-                                "role": "system", 
-                                "content": "[STOP_EXAM] Gib jetzt die Bewertung (B1/A2)."
-                            })
-                            st.session_state.exam_finished = True
-                        
-                        ai_response = get_ai_response(st.session_state.messages)
-                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                        text_to_speech(ai_response)
+            # Обработка
+            with st.spinner("..."):
+                # 1. Whisper
+                try:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1", 
+                        file=("temp.wav", audio_bytes), # Передаем байты напрямую с именем
+                        language="de"
+                    )
+                    user_text = transcript.text
+                except Exception as e:
+                    st.error("Ошибка микрофона. Попробуйте еще раз.")
+                    st.stop()
 
-                    st.session_state.recorder_key += 1
+                # Фильтр
+                blacklist = ["video hat euch gefallen", "abo da", "untertitel", "copyright"]
+                if any(b in user_text.lower() for b in blacklist) or len(user_text) < 2:
+                    st.warning("Не расслышал. Повторите.")
+                    st.session_state.recorder_key = str(random.randint(1,999))
                     st.rerun()
 
-    # AUTOPLAY
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
-        if os.path.exists("output_voice.mp3"):
-            st.audio("output_voice.mp3", format="audio/mp3", autoplay=True)
+                # 2. GPT
+                st.session_state.chat_history.append(("user", user_text))
+                st.session_state.turn_count += 1
+                
+                sys_prompt = PROMPTS[st.session_state.exam_type]
+                if st.session_state.turn_count >= 3: # 3 хода и финиш
+                    sys_prompt = GRADING_PROMPT
+                    st.session_state.exam_finished = True
+
+                messages = [{"role": "system", "content": sys_prompt}]
+                for r, t in st.session_state.chat_history:
+                    messages.append({"role": r, "content": t})
+                
+                resp = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+                ai_text = resp.choices[0].message.content
+                
+                st.session_state.chat_history.append(("assistant", ai_text))
+                
+                # 3. TTS
+                st.session_state.last_audio = text_to_speech(ai_text)
+                
+                # Сброс кнопки
+                st.session_state.recorder_key = str(random.randint(1,999))
+                st.rerun()
+
+# --- РЕЗУЛЬТАТ ---
+elif st.session_state.page == "result":
+    st.title("Ergebnis")
+    st.markdown(st.session_state.chat_history[-1][1])
+    if st.button("Zurück zum Menü"): go_to("menu")
