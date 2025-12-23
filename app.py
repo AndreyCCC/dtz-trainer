@@ -8,13 +8,103 @@ import random
 import time
 
 # ==========================================
-# 1. КОНФИГУРАЦИЯ
+# 1. КОНФИГУРАЦИЯ И СТИЛИ (THEME)
 # ==========================================
-st.set_page_config(page_title="DTZ Exam AI", page_icon="🇩🇪", layout="centered")
+st.set_page_config(page_title="DTZ Lingo", page_icon="🦉", layout="centered")
+
+# --- ВСТАВЬ КЛЮЧ СЮДА ---
+LOCAL_API_KEY = "sk-..." 
+
+# --- CSS МАГИЯ (Duolingo Style) ---
+st.markdown("""
+<style>
+    /* 1. Глобальный фон и шрифт */
+    .stApp {
+        background-color: #131F24; /* Глубокий темный */
+        font-family: 'Segoe UI', sans-serif;
+    }
+    
+    /* 2. Кнопки как в Duolingo (3D эффект) */
+    div.stButton > button {
+        width: 100%;
+        background-color: #58CC02; /* Ярко-зеленый */
+        color: white;
+        border: none;
+        border-bottom: 5px solid #46A302; /* Тень кнопки */
+        border-radius: 15px;
+        padding: 15px 20px;
+        font-size: 18px;
+        font-weight: 700;
+        transition: all 0.1s;
+    }
+    div.stButton > button:hover {
+        background-color: #61E002;
+        border-bottom: 5px solid #46A302;
+        color: white;
+    }
+    div.stButton > button:active {
+        border-bottom: 0px solid #46A302;
+        transform: translateY(5px); /* Эффект нажатия */
+    }
+
+    /* 3. Вторичные кнопки (Серые) */
+    .secondary-button > button {
+        background-color: #37464F !important;
+        border-bottom: 5px solid #283339 !important;
+    }
+
+    /* 4. Карточки заданий */
+    .exam-card {
+        background-color: #202F36;
+        border: 2px solid #37464F;
+        border-radius: 20px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 15px;
+        color: white;
+    }
+    .exam-icon { font-size: 40px; margin-bottom: 10px; }
+    .exam-title { font-size: 20px; font-weight: bold; margin-bottom: 5px; }
+    .exam-desc { font-size: 14px; color: #AFBCC4; }
+
+    /* 5. Чат пузыри */
+    .chat-container { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
+    
+    .bubble-ai {
+        align-self: flex-start;
+        background-color: #37464F;
+        color: white;
+        padding: 15px;
+        border-radius: 20px 20px 20px 0;
+        border: 2px solid #4B5C66;
+        max-width: 80%;
+        font-size: 16px;
+        line-height: 1.5;
+    }
+    
+    .bubble-user {
+        align-self: flex-end;
+        background-color: #1CB0F6; /* Голубой */
+        color: white;
+        padding: 15px;
+        border-radius: 20px 20px 0 20px;
+        border-bottom: 4px solid #1899D6;
+        max-width: 80%;
+        font-size: 16px;
+        text-align: right;
+    }
+
+    /* Скрываем лишнее */
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    
+    /* Прогресс бар */
+    .stProgress > div > div > div > div {
+        background-color: #FFC800; /* Золотой */
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- АВТОРИЗАЦИЯ ---
-LOCAL_API_KEY = "sk-..."  # <--- ВСТАВЬ КЛЮЧ
-
 try:
     if "OPENAI_API_KEY" in st.secrets:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -23,294 +113,259 @@ try:
 except:
     client = OpenAI(api_key=LOCAL_API_KEY)
 
-# --- УМНЫЕ ПРОМПТЫ (En для логики, De для речи) ---
+# --- ЛОГИКА И ПРОМПТЫ ---
+# Аватар экзаменатора (ссылка на 3D голову)
+AVATAR_URL = "https://cdn3d.iconscout.com/3d/premium/thumb/teacher-5692639-4743450.png"
+
 PROMPTS = {
-    "vorstellung": """
-        You are an official examiner for the DTZ (Deutsch-Test für Zuwanderer) exam, level B1.
-        Part 1: Introduction (Vorstellung).
-        Task: Ask the candidate strictly ONE question at a time about: Name, Origin, Home, Work, Family, or Hobbies.
-        Tone: Professional but friendly. Speak simple German (A2/B1).
-    """,
-    "bild": """
-        You are an official DTZ examiner (B1).
-        Part 2: Picture Description (Bildbeschreibung).
-        Task: The candidate describes a picture. You SEE the same picture.
-        Rules:
-        1. Listen to the description.
-        2. If the candidate stops, ask ONE specific question about details in the image (clothes, weather, background).
-        3. Correct major factual errors politely ("Are you sure? I see...").
-    """,
-    "planung": """
-        You are an official DTZ examiner (B1).
-        Part 3: Joint Planning (Planung).
-        Situation: We are planning a party or a picnic together.
-        Task: Discuss details (When? Where? Food? Gift?).
-        Rules: Make your own suggestions, sometimes politely disagree with the candidate.
-    """
+    "vorstellung": "Du bist ein freundlicher DTZ Prüfer (B1). Teil 1. Frage nach: Name, Herkunft, Beruf, Familie. Nur EINE Frage.",
+    "bild": "Du bist ein DTZ Prüfer (B1). Teil 2: Bildbeschreibung. Höre zu. Frage nach Details. Nur EINE Frage.",
+    "planung": "Du bist ein DTZ Prüfer (B1). Teil 3: Planung. Wir planen eine Party. Mache Vorschläge."
 }
+GRADING_PROMPT = "Bewertung (B1). Format: Markdown. Kurz und knackig. Ergebnis: Bestanden/Nicht."
 
-GRADING_PROMPT = """
-EXAM FINISHED. ACT AS A STRICT GRADER.
-Provide feedback in German using Markdown.
-Structure:
-### 📊 Ergebnis: [B1 / A2 / unter A2]
-- **Inhalt:** ...
-- **Grammatik:** ...
-- **Wortschatz:** ...
-- **Tipp:** (One specific advice)
-"""
-
-# ==========================================
-# 2. ФУНКЦИИ-ПОМОЩНИКИ
-# ==========================================
-
-def get_ai_audio(text):
-    """Генерация голоса (TTS)"""
+# --- ФУНКЦИИ ---
+def text_to_speech(text):
     try:
         response = client.audio.speech.create(model="tts-1", voice="onyx", input=text)
         return response.content
-    except Exception as e:
-        st.error(f"TTS Error: {e}")
-        return None
+    except: return None
 
-def check_hallucinations(text):
-    """Фильтр бреда Whisper (из нашего опыта)"""
-    blacklist = [
-        "video hat euch gefallen", "abo da", "untertitel", 
-        "bits von white", "amara.org", "copyright", 
-        "bis zum nächsten mal", "nächste frage", "mbc"
-    ]
-    if len(text.strip()) < 3: return True
-    if any(phrase in text.lower() for phrase in blacklist): return True
-    return False
-
-def autoplay_hack(audio_bytes):
-    """Пробиваем защиту Safari через iFrame"""
-    if not audio_bytes: return
-    b64 = base64.b64encode(audio_bytes).decode()
-    html = f"""
-        <audio id="player" autoplay controls style="width: 100%;">
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-        <script>
-            var audio = document.getElementById("player");
-            audio.play().catch(e => console.log("Autoplay blocked, user must click play"));
-        </script>
-    """
-    # height=50 делает плеер видимым, чтобы юзер мог нажать Play, если автоплей не сработает
-    components.html(html, height=50)
+def get_ai_response(messages):
+    response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+    return response.choices[0].message.content
 
 def reset_session():
     st.session_state.chat_history = []
     st.session_state.turn_count = 0
     st.session_state.exam_finished = False
     st.session_state.recorder_key = str(random.randint(1000, 99999))
-    # Новая картинка для Vision
-    st.session_state.current_image = f"https://picsum.photos/seed/{random.randint(1,9999)}/400/300"
+    st.session_state.current_image = f"https://picsum.photos/seed/{random.randint(1,999)}/400/300"
     if "last_audio" in st.session_state: del st.session_state.last_audio
 
 def go_to(page):
     st.session_state.page = page
     st.rerun()
 
-# ==========================================
-# 3. STATE
-# ==========================================
+def autoplay_hack(audio_bytes):
+    """Невидимый, но надежный плеер"""
+    if not audio_bytes: return
+    b64 = base64.b64encode(audio_bytes).decode()
+    html = f"""
+        <audio id="player" autoplay controls style="width: 100%; border-radius: 10px; margin-top: 10px;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+        <script>
+            var audio = document.getElementById("player");
+            audio.play().catch(e => console.log("Autoplay blocked"));
+        </script>
+    """
+    components.html(html, height=60)
+
+# --- STATE ---
 if "page" not in st.session_state: st.session_state.page = "menu"
 if "exam_type" not in st.session_state: st.session_state.exam_type = "bild"
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "turn_count" not in st.session_state: st.session_state.turn_count = 0
 if "recorder_key" not in st.session_state: st.session_state.recorder_key = "1"
 
-# Стили для красивых пузырей чата
-st.markdown("""
-<style>
-.user-msg {background-color:#e3f2fd; padding:10px; border-radius:15px 15px 0 15px; text-align:right; color:black; margin: 5px 0; border: 1px solid #bbdefb;}
-.ai-msg {background-color:#f1f8e9; padding:10px; border-radius:15px 15px 15px 0; text-align:left; color:black; margin: 5px 0; border: 1px solid #c5e1a5;}
-.stButton button {width:100%; border-radius:10px; height: 3.5rem; font-weight:bold; font-size: 16px;}
-</style>
-""", unsafe_allow_html=True)
-
 # ==========================================
-# 4. ИНТЕРФЕЙС
+# ЭКРАН 1: ГЛАВНОЕ МЕНЮ (КАРТОЧКИ)
 # ==========================================
-
-# --- ГЛАВНОЕ МЕНЮ ---
 if st.session_state.page == "menu":
-    st.title("🇩🇪 DTZ Prüfungssimulator")
-    st.info("Wählen Sie einen Teil der Prüfung:")
     
-    col1, col2 = st.columns([1, 5])
-    
-    with col1: st.write("👤")
-    with col2: 
-        if st.button("Teil 1: Vorstellung (О себе)"):
-            st.session_state.exam_type = "vorstellung"
-            reset_session()
-            go_to("exam")
-
-    with col1: st.write("🖼️")
-    with col2: 
-        if st.button("Teil 2: Bildbeschreibung"):
-            st.session_state.exam_type = "bild"
-            reset_session()
-            go_to("exam")
-
-    with col1: st.write("🗣️")
-    with col2: 
-        if st.button("Teil 3: Planung (Диалог)"):
-            st.session_state.exam_type = "planung"
-            reset_session()
-            go_to("exam")
-
-# --- ЭКРАН ЭКЗАМЕНА ---
-elif st.session_state.page == "exam":
-    # 1. Навигация
-    c1, c2, c3 = st.columns([1, 3, 1])
-    with c1: 
-        if st.button("🔙"): go_to("menu")
+    # Хедер
+    c1, c2 = st.columns([1, 4])
+    with c1: st.image(AVATAR_URL, width=60)
     with c2: 
-        # Прогресс бар экзамена
-        progress = min(st.session_state.turn_count / 4, 1.0)
-        st.progress(progress)
-    with c3: 
-        if st.button("🔄"): reset_session(); st.rerun()
+        st.markdown("<h2 style='margin:0; color:white;'>Lern Deutsch!</h2>", unsafe_allow_html=True)
+        st.caption("Wähle deine Lektion")
 
-    # 2. Визуальный контекст (Задание)
+    st.write("") # Отступ
+
+    # Карточка 1: О себе
+    st.markdown("""
+    <div class="exam-card">
+        <div class="exam-icon">👤</div>
+        <div class="exam-title">Vorstellung</div>
+        <div class="exam-desc">Erzähl über dich: Name, Hobbys, Arbeit.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("STARTEN (Teil 1)", key="btn1"):
+        st.session_state.exam_type = "vorstellung"
+        reset_session()
+        go_to("exam")
+
+    st.write("") 
+
+    # Карточка 2: Картинка
+    st.markdown("""
+    <div class="exam-card">
+        <div class="exam-icon">🖼️</div>
+        <div class="exam-title">Bildbeschreibung</div>
+        <div class="exam-desc">Beschreibe, was du auf dem Foto siehst.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("STARTEN (Teil 2)", key="btn2"):
+        st.session_state.exam_type = "bild"
+        reset_session()
+        go_to("exam")
+
+    st.write("") 
+
+    # Карточка 3: Планирование
+    st.markdown("""
+    <div class="exam-card">
+        <div class="exam-icon">🎉</div>
+        <div class="exam-title">Planung</div>
+        <div class="exam-desc">Organisiere eine Party oder ein Picknick.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("STARTEN (Teil 3)", key="btn3"):
+        st.session_state.exam_type = "planung"
+        reset_session()
+        go_to("exam")
+
+# ==========================================
+# ЭКРАН 2: ЭКЗАМЕН (ЧАТ)
+# ==========================================
+elif st.session_state.page == "exam":
+    
+    # 1. Верхний бар (Прогресс и Выход)
+    c1, c2, c3 = st.columns([1, 6, 1])
+    with c1:
+        # Используем пустой контейнер с классом secondary для стилизации кнопки назад (через CSS хак сложнее, оставим стандарт)
+        if st.button("❌", key="back"): go_to("menu")
+    with c2:
+        # Прогресс бар
+        st.progress(min(st.session_state.turn_count / 4, 1.0))
+    with c3:
+        st.write("❤️ 5") # Геймификация (жизни)
+
+    # 2. Визуал задания
     if st.session_state.exam_type == "bild":
-        st.image(st.session_state.current_image, use_container_width=True, caption="Ihre Aufgabe: Beschreiben Sie das Bild")
+        st.image(st.session_state.current_image, use_container_width=True)
+        st.caption("Was sehen Sie auf dem Bild?")
     elif st.session_state.exam_type == "planung":
-        st.success("💡 Aufgabe: Planen Sie gemeinsam eine Abschiedsparty.")
+        st.info("📅 Aufgabe: Planen Sie eine Party.")
     else:
-        st.info("💡 Aufgabe: Stellen Sie sich vor (Name, Land, Beruf).")
+        # Аватар экзаменатора для разговора
+        c1, c2 = st.columns([1, 2])
+        with c1: st.image(AVATAR_URL, width=100)
+        with c2: st.success("Hallo! Ich bin Herr Müller.")
 
-    st.divider()
+    st.write("---")
 
-    # 3. Чат-история (Рендеринг)
-    chat_container = st.container()
-    with chat_container:
-        for role, text in st.session_state.chat_history:
-            css = "user-msg" if role == "user" else "ai-msg"
-            icon = "👤" if role == "user" else "🎓"
-            st.markdown(f"<div class='{css}'>{icon} {text}</div>", unsafe_allow_html=True)
-
-    # 4. Приветствие (Авто-старт при пустой истории)
+    # 3. Приветствие (старт)
     if not st.session_state.chat_history:
         start_texts = {
-            "vorstellung": "Guten Tag. Wie heißen Sie und woher kommen Sie?",
-            "bild": "Guten Tag. Bitte beschreiben Sie, was Sie auf dem Bild sehen.",
-            "planung": "Hallo! Wir wollen eine Party organisieren. Haben Sie eine Idee?"
+            "vorstellung": "Hallo! Wie heißen Sie und woher kommen Sie?",
+            "bild": "Bitte beschreiben Sie dieses Bild.",
+            "planung": "Hallo! Wollen wir eine Party organisieren?"
         }
         greeting = start_texts[st.session_state.exam_type]
         st.session_state.chat_history.append(("assistant", greeting))
-        
-        # Генерируем голос
-        st.session_state.last_audio = get_ai_audio(greeting)
+        st.session_state.last_audio = text_to_speech(greeting)
         st.rerun()
 
-    # 5. Плеер (Гибридный хак)
-    if "last_audio" in st.session_state:
-        st.write("---")
-        # Этот компонент попытается воспроизвести звук сам. Если нет - покажет плеер.
+    # 4. Чат (Красивые пузыри)
+    # Используем HTML для полного контроля над видом
+    chat_html = "<div class='chat-container'>"
+    for role, text in st.session_state.chat_history:
+        if role == "user":
+            chat_html += f"<div class='bubble-user'>{text}</div>"
+        else:
+            chat_html += f"<div class='bubble-ai'>{text}</div>"
+    chat_html += "</div>"
+    st.markdown(chat_html, unsafe_allow_html=True)
+
+    # 5. Аудио (Ответ экзаменатора)
+    if "last_audio" in st.session_state and st.session_state.last_audio:
         autoplay_hack(st.session_state.last_audio)
 
-    # 6. Управление (Запись или Финиш)
+    # 6. Ввод (Микрофон)
+    st.write("") # Отступ
+    
     if st.session_state.exam_finished:
-        st.success("Prüfung beendet! (Экзамен завершен)")
-        if st.button("🏆 Ergebnis anzeigen", type="primary"):
+        st.balloons()
+        if st.button("WEITER (Результат)", type="primary"):
             go_to("result")
     else:
-        st.write("")
+        # Центрируем микрофон
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
-            # КНОПКА ЗАПИСИ
-            # pause_threshold=60.0 -> Не отключается сама минуту!
             audio_bytes = audio_recorder(
                 text="",
                 recording_color="#ff4b4b",
-                neutral_color="#4CAF50",
+                neutral_color="#58CC02", # Зеленый как в кнопках
                 icon_size="4x",
                 key=st.session_state.recorder_key,
-                pause_threshold=60.0, 
+                pause_threshold=60.0,
                 sample_rate=44100
             )
+            st.caption("Нажми, чтобы говорить")
 
+        # Обработка
         if audio_bytes:
-            with st.spinner("Verarbeite..."):
-                # A. Whisper (Распознавание)
+            with st.spinner("..."):
                 try:
-                    transcript = client.audio.transcriptions.create(
-                        model="whisper-1", 
-                        file=("temp.wav", audio_bytes), 
-                        language="de"
-                    )
+                    transcript = client.audio.transcriptions.create(model="whisper-1", file=("temp.wav", audio_bytes), language="de")
                     user_text = transcript.text
-                except:
-                    st.error("Mikrofon Fehler")
-                    st.stop()
+                except: user_text = ""
 
-                # B. Фильтр Галлюцинаций
-                if check_hallucinations(user_text):
-                    st.toast("⚠️ Не расслышал. Повторите!", icon="❌")
-                    # Мягкий сброс ключа, чтобы юзер мог нажать снова
+                # Фильтр
+                blacklist = ["video hat euch gefallen", "abo da", "untertitel"]
+                if any(b in user_text.lower() for b in blacklist) or len(user_text) < 2:
+                    st.toast("Не слышно. Попробуй еще раз!", icon="⚠️")
                     st.session_state.recorder_key = str(random.randint(1,999))
                     time.sleep(1)
                     st.rerun()
 
-                # C. Сохраняем ответ юзера
                 st.session_state.chat_history.append(("user", user_text))
                 st.session_state.turn_count += 1
                 
-                # D. Подготовка контекста для GPT
-                # Проверяем, пора ли заканчивать
-                sys_content = PROMPTS[st.session_state.exam_type]
-                if st.session_state.turn_count >= 4: # 4 хода для полноценного разговора
-                    sys_content = GRADING_PROMPT
+                # Логика финала
+                sys_prompt = PROMPTS[st.session_state.exam_type]
+                if st.session_state.turn_count >= 3:
+                    sys_prompt = GRADING_PROMPT
                     st.session_state.exam_finished = True
 
-                gpt_messages = [{"role": "system", "content": sys_content}]
-                
-                # VISION: Если это Bildbeschreibung, добавляем картинку в контекст
+                # GPT запрос
+                messages = [{"role": "system", "content": sys_prompt}]
+                # Vision для картинки
                 if st.session_state.exam_type == "bild":
-                    # Передаем картинку вместе с последним текстовым сообщением (или как системный контекст)
-                    # GPT-4o-mini поддерживает список content
-                    user_content = [
-                        {"type": "text", "text": f"Ich sehe auf dem Bild: {user_text}"},
+                     user_msg_content = [
+                        {"type": "text", "text": user_text},
                         {"type": "image_url", "image_url": {"url": st.session_state.current_image}}
                     ]
-                    # Добавляем историю
-                    for r, t in st.session_state.chat_history[:-1]: # Все кроме последнего
-                        gpt_messages.append({"role": r, "content": t})
-                    # Добавляем последний с картинкой
-                    gpt_messages.append({"role": "user", "content": user_content})
+                     # Добавляем историю упрощенно, а текущий с картинкой
+                     for r, t in st.session_state.chat_history[:-1]: messages.append({"role": r, "content": t})
+                     messages.append({"role": "user", "content": user_msg_content})
                 else:
-                    # Обычный текстовый режим
-                    for r, t in st.session_state.chat_history:
-                        gpt_messages.append({"role": r, "content": t})
+                    for r, t in st.session_state.chat_history: messages.append({"role": r, "content": t})
                 
-                # E. GPT Запрос
-                resp = client.chat.completions.create(model="gpt-4o-mini", messages=gpt_messages)
-                ai_text = resp.choices[0].message.content
-                
+                ai_text = get_ai_response(messages)
                 st.session_state.chat_history.append(("assistant", ai_text))
+                st.session_state.last_audio = text_to_speech(ai_text)
                 
-                # F. TTS Генерация
-                st.session_state.last_audio = get_ai_audio(ai_text)
-                
-                # Сброс рекордера для следующего хода
                 st.session_state.recorder_key = str(random.randint(1,999))
                 st.rerun()
 
-# --- ЭКРАН РЕЗУЛЬТАТА ---
+# ==========================================
+# ЭКРАН 3: РЕЗУЛЬТАТ
+# ==========================================
 elif st.session_state.page == "result":
-    st.title("Ergebnis")
-    st.balloons()
+    st.markdown("<h1 style='text-align: center; color: #58CC02;'>Gut gemacht!</h1>", unsafe_allow_html=True)
+    st.image(AVATAR_URL, width=150) # Аватар доволен
     
-    # Последнее сообщение - это оценка
+    # Карточка с результатом
     feedback = st.session_state.chat_history[-1][1]
+    st.markdown(f"""
+    <div class="exam-card" style="text-align: left;">
+        {feedback}
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown(feedback)
-    
-    st.write("---")
-    if st.button("🏠 Zurück zum Menü (В меню)", use_container_width=True):
+    st.write("")
+    if st.button("WEITER (В меню)"):
         go_to("menu")
